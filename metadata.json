@@ -1,0 +1,6 @@
+{
+  "name": "Textile Technology AI Teacher",
+  "description": "Personal AI Teacher & Study Assistant for Diploma in Textile Technology and Textile Engineering students.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

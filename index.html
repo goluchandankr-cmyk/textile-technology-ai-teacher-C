@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Textile Technology AI Teacher</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- React & ReactDOM CDN -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  
+  <!-- Babel Standalone (for JSX parsing) -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased">
+
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    function App() {
+      const [activeTab, setActiveTab] = useState('ask-ai');
+      const [query, setQuery] = useState('');
+      const [answer, setAnswer] = useState('');
+      const [loading, setLoading] = useState(false);
+      const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_api_key') || '');
+      const [showKeyModal, setShowKeyModal] = useState(!localStorage.getItem('gemini_api_key'));
+      const [savedNotes, setSavedNotes] = useState(JSON.parse(localStorage.getItem('textile_notes') || '[]'));
+      const [selectedMcqOption, setSelectedMcqOption] = useState(null);
+
+      useEffect(() => {
+        if (window.lucide) {
+          window.lucide.createIcons();
+        }
+      }, [activeTab, answer, loading, showKeyModal]);
+
+      const saveApiKey = (key) => {
+        setApiKey(key);
+        localStorage.setItem('gemini_api_key', key);
+        setShowKeyModal(false);
+      };
+
+      const handleAskAI = async () => {
+        if (!query.trim()) return;
+        const cleanKey = apiKey.trim();
+        if (!cleanKey) {
+          setShowKeyModal(true);
+          return;
+        }
+
+        setLoading(true);
+        setAnswer('');
+
+        const systemPrompt = `You are a personal AI Teacher for Diploma in Textile Technology and Textile Engineering students.
+Provide answers in simple Hindi/Hinglish with English technical terms.
+Formatting instructions:
+- For Machines: Definition, Working Principle, Main Parts & Functions, Working Mechanism, Advantages, Disadvantages, Applications, and Key Exam Point.
+- For Definitions: Definition, Simple Explanation, Exam Point.
+- For Differences: Side-by-side comparison table or bullet points.
+- For Numericals: Formula, Given Data, Step-by-Step Calculation, Unit, and Final Answer.`;
+
+        try {
+          const modelsToTry = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-3.5-flash'];
+          let finalAnswer = '';
+          let lastError = '';
+
+          for (const modelName of modelsToTry) {
+            try {
+              const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(cleanKey)}`, {
+                method: 'POST',
+                headers: { 
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                  contents: [{ role: 'user', parts: [{ text: query }] }],
+                  systemInstruction: { parts: [{ text: systemPrompt }] },
+                  generationConfig: {
+                    temperature: 0.7,
+                    topK: 40,
+                    topP: 0.95,
+                    maxOutputTokens: 2048
+                  }
+                })
+              });
+
+              const data = await response.json();
+
+              if (!response.ok) {
+                const errorMsg = data.error?.message || `HTTP Error ${response.status}: ${response.statusText}`;
+                lastError = errorMsg;
+                if (response.status === 404) {
+                  // Model not found in this region/key tier, try next model candidate in list
+                  continue;
+                }
+                if (response.status === 400 && errorMsg.toLowerCase().includes('api key')) {
+                  setAnswer('❌ अमान्य API Key (Invalid API Key): कृपया अपनी Google AI Studio API Key की जांच करें।');
+                  setShowKeyModal(true);
+                  return;
+                }
+                if (response.status === 429) {
+                  setAnswer('⚠️ Quota Exceeded: अनुरोध सीमा समाप्त हो गई है। कृपया थोड़ी देर बाद प्रयास करें।');
+                  return;
+                }
+                break;
+              }
+
+              if (data.candidates && data.candidates.length > 0) {
+                const candidate = data.candidates[0];
+                const textPart = candidate.content?.parts?.find(p => p.text)?.text;
+                if (textPart) {
+                  finalAnswer = textPart;
+                  break;
+                }
+              }
+            } catch (innerErr) {
+              lastError = innerErr.message;
+            }
+          }
+
+          if (finalAnswer) {
+            setAnswer(finalAnswer);
+          } else if (lastError) {
+            setAnswer(`❌ त्रुटि: ${lastError}`);
+          } else {
+            setAnswer('⚠️ कोई उत्तर प्राप्त नहीं हुआ। कृपया प्रश्न को पुनः लिखकर पूछें।');
+          }
+        } catch (err) {
+          console.error('API Error:', err);
+          setAnswer(`❌ नेटवर्क त्रुटि (Network Error): AI सर्वर से कनेक्ट नहीं हो सका (${err.message || 'Check connection or CORS'}).`);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const handleSpeak = (text) => {
+        if ('speechSynthesis' in window) {
+          window.speechSynthesis.cancel();
+          const utterance = new SpeechSynthesisUtterance(text.replace(/[*#]/g, '').slice(0, 1000));
+          utterance.lang = 'hi-IN';
+          window.speechSynthesis.speak(utterance);
+        }
+      };
+
+      const saveNote = () => {
+        if (!answer) return;
+        const newNotes = [{ id: Date.now(), title: query, content: answer }, ...savedNotes];
+        setSavedNotes(newNotes);
+        localStorage.setItem('textile_notes', JSON.stringify(newNotes));
+        alert('उत्तर आपके My Notes में सहेज लिया गया है!');
+      };
+
+      return (
+        <div className="min-h-screen flex flex-col md:flex-row">
+          
+          {/* Sidebar */}
+          <aside className="w-full md:w-64 bg-indigo-950 text-white p-4 flex flex-col justify-between shadow-xl">
+            <div>
+              <div className="flex items-center gap-3 mb-8 px-2">
+                <div className="p-2.5 bg-indigo-600 rounded-xl shadow-md">
+                  <i data-lucide="bot" className="w-6 h-6 text-white"></i>
+                </div>
+                <div>
+                  <h1 className="font-bold text-base leading-tight">Textile AI Teacher</h1>
+                  <p className="text-xs text-indigo-300">Diploma Study Assistant</p>
+                </div>
+              </div>
+
+              <nav className="space-y-1">
+                {[
+                  { id: 'ask-ai', label: 'Ask AI Teacher', icon: 'sparkles' },
+                  { id: 'subjects', label: 'Subjects & Topics', icon: 'book-open' },
+                  { id: 'exam-prep', label: 'Exam Prep (1/2/5/10M)', icon: 'graduation-cap' },
+                  { id: 'practicals', label: 'Lab Practicals', icon: 'flask-conical' },
+                  { id: 'mcq', label: 'MCQ Practice', icon: 'check-square' },
+                  { id: 'notes', label: 'My Saved Notes', icon: 'bookmark' },
+                ].map(item => (
+                  <button
+                    key={item.id}
+                    onClick={() => setActiveTab(item.id)}
+                    className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                      activeTab === item.id 
+                        ? 'bg-indigo-600 text-white shadow-md' 
+                        : 'text-indigo-200 hover:bg-indigo-900 hover:text-white'
+                    }`}
+                  >
+                    <i data-lucide={item.icon} className="w-4 h-4"></i>
+                    {item.label}
+                  </button>
+                ))}
+              </nav>
+            </div>
+
+            <div className="pt-4 border-t border-indigo-900/80 text-xs text-indigo-300 flex items-center justify-between">
+              <span>Textile AI v1.0</span>
+              <button onClick={() => setShowKeyModal(true)} className="underline text-indigo-200 hover:text-white">
+                API Key
+              </button>
+            </div>
+          </aside>
+
+          {/* Main Area */}
+          <main className="flex-1 p-4 md:p-8 max-w-5xl mx-auto w-full">
+            
+            {/* Ask AI Tab */}
+            {activeTab === 'ask-ai' && (
+              <div className="space-y-6">
+                <header className="bg-gradient-to-r from-indigo-600 to-indigo-800 text-white p-6 rounded-2xl shadow-md">
+                  <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2">
+                    <i data-lucide="sparkles" className="w-6 h-6 text-yellow-300"></i>
+                    अपना Textile Technology Question पूछें
+                  </h2>
+                  <p className="text-indigo-100 text-xs md:text-sm mt-1">
+                    Kirschner Beater, Blow Room, Rapier Loom, Uster Tester, or Dyeing से संबंधित प्रश्न पूछें।
+                  </p>
+                </header>
+
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
+                  <textarea
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="उदाहरण: Kirschner Beater ka kya kaam hai? या Rapier Loom ka working mechanism explain karo..."
+                    className="w-full h-28 p-3 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none text-slate-800 text-sm"
+                  />
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                    <div className="flex items-center gap-1 text-slate-500 text-xs">
+                      <span className="bg-slate-100 px-2 py-1 rounded">Hindi</span>
+                      <span className="bg-slate-100 px-2 py-1 rounded">English</span>
+                      <span className="bg-slate-100 px-2 py-1 rounded">Hinglish</span>
+                    </div>
+
+                    <button
+                      onClick={handleAskAI}
+                      disabled={loading}
+                      className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm text-sm"
+                    >
+                      {loading ? 'AI सोच रहा है...' : 'उत्तर पाएँ'}
+                      <i data-lucide="send" className="w-4 h-4"></i>
+                    </button>
+                  </div>
+                </div>
+
+                {answer && (
+                  <div className="bg-white p-6 rounded-xl border border-indigo-100 shadow-sm space-y-4">
+                    <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                      <span className="font-semibold text-indigo-900 flex items-center gap-2 text-sm">
+                        <i data-lucide="bot" className="w-5 h-5 text-indigo-600"></i>
+                        Diploma Exam Oriented Solution
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => handleSpeak(answer)} className="p-2 hover:bg-indigo-50 text-indigo-600 rounded-lg" title="Listen">
+                          <i data-lucide="volume-2" className="w-5 h-5"></i>
+                        </button>
+                        <button onClick={saveNote} className="p-2 hover:bg-indigo-50 text-indigo-600 rounded-lg" title="Save">
+                          <i data-lucide="bookmark" className="w-5 h-5"></i>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="text-slate-700 text-sm whitespace-pre-line leading-relaxed">
+                      {answer}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Exam Prep Tab */}
+            {activeTab === 'exam-prep' && (
+              <div className="space-y-6">
+                <header className="bg-gradient-to-r from-purple-600 to-indigo-700 text-white p-6 rounded-2xl shadow-md">
+                  <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2">
+                    <i data-lucide="graduation-cap" className="w-6 h-6 text-amber-300"></i>
+                    Exam Preparation (1 / 2 / 5 / 10 Marks)
+                  </h2>
+                  <p className="text-purple-100 text-xs md:text-sm mt-1">
+                    Select a marks category to generate targeted exam questions with sample answers.
+                  </p>
+                </header>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {[
+                    { marks: '1 Mark', desc: 'Definitions & Objectives', prompt: 'Textile Technology ke top 5 important 1-mark objective questions aur unke direct answers batao.' },
+                    { marks: '2 Marks', desc: 'Short Notes & Differences', prompt: 'Spinning aur Weaving ke 5 most repeated 2-mark short questions with precise answers banao.' },
+                    { marks: '5 Marks', desc: 'Machine Working & Functions', prompt: 'Diploma Textile exam ke liye 5-mark level ka detailed question: Rapier Loom vs Air Jet Loom working & comparison with points.' },
+                    { marks: '10 Marks', desc: 'Long Descriptive / Design', prompt: 'Diploma Textile 10-mark long answer: Blow Room sequence from Ginning to Scutcher with line diagram & machine functions.' }
+                  ].map((item, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        setQuery(item.prompt);
+                        setActiveTab('ask-ai');
+                      }}
+                      className="p-4 bg-white rounded-xl border border-slate-200 hover:border-purple-500 hover:shadow-md transition-all text-left flex flex-col justify-between"
+                    >
+                      <div>
+                        <span className="inline-block px-2.5 py-1 bg-purple-100 text-purple-700 text-xs font-bold rounded-lg mb-2">{item.marks}</span>
+                        <p className="text-xs text-slate-600">{item.desc}</p>
+                      </div>
+                      <span className="text-purple-600 text-xs font-semibold mt-3 flex items-center gap-1">Generate <i data-lucide="arrow-right" className="w-3 h-3"></i></span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-3">
+                  <h3 className="font-bold text-slate-800 text-sm">Custom Topic Exam Question Generator</h3>
+                  <div className="flex gap-2">
+                    <input
+                      id="customExamTopic"
+                      type="text"
+                      placeholder="e.g. Carding action, Uster Evenness Tester, Sizing ingredients"
+                      className="flex-1 p-2.5 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-purple-500 outline-none"
+                    />
+                    <button
+                      onClick={() => {
+                        const val = document.getElementById('customExamTopic')?.value;
+                        if (val) {
+                          setQuery(`${val} par Diploma Textile exam ke 2, 5, aur 10 marks ke questions aur sample answers banao.`);
+                          setActiveTab('ask-ai');
+                        }
+                      }}
+                      className="px-4 py-2.5 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition"
+                    >
+                      Generate Set
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Practicals Tab */}
+            {activeTab === 'practicals' && (
+              <div className="space-y-4">
+                <header className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white p-6 rounded-2xl shadow-md">
+                  <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2">
+                    <i data-lucide="flask-conical" className="w-6 h-6 text-emerald-200"></i>
+                    Textile Lab & Practical Manuals
+                  </h2>
+                  <p className="text-emerald-100 text-xs md:text-sm mt-1">
+                    Complete Aim, Apparatus, Principle, Procedure, Observation Table, Calculations, and Viva Questions.
+                  </p>
+                </header>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {[
+                    { title: 'Yarn Count Determination', desc: 'Wrap Reel & Analytical Balance (Ne, Tex, Denier calculation)' },
+                    { title: 'Uster Evenness Tester (U% & CV%)', desc: 'Measuring Yarn Irregularity and Imperfections (Thick/Thin places, Neps)' },
+                    { title: 'Fabric GSM & Construction Analysis', desc: 'GSM Cutter, Picks/Inch, Ends/Inch, Crimping % calculation' },
+                    { title: 'Twist per Inch (TPI) Determination', desc: 'Continuous Twist Tester (Untwist-Retwist method)' },
+                    { title: 'Scouring & Bleaching of Cotton', desc: 'Chemical recipe, M:L ratio, Weight loss %, Whiteness index' },
+                    { title: 'Tensile Strength Testing (Lea Strength)', desc: 'Lea Strength Tester / CSP Calculation' }
+                  ].map((item, idx) => (
+                    <div
+                      key={idx}
+                      onClick={() => {
+                        setQuery(`${item.title} ka complete practical manual likho (Aim, Apparatus, Principle, Procedure, Observation Table, Calculations formula, Precautions, aur 5 Viva Questions).`);
+                        setActiveTab('ask-ai');
+                      }}
+                      className="bg-white p-5 rounded-xl border border-slate-200 hover:border-emerald-500 hover:shadow-md cursor-pointer transition-all flex items-center justify-between"
+                    >
+                      <div>
+                        <h3 className="font-semibold text-slate-800 text-sm flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                          {item.title}
+                        </h3>
+                        <p className="text-xs text-slate-500 mt-1">{item.desc}</p>
+                      </div>
+                      <i data-lucide="chevron-right" className="w-5 h-5 text-emerald-500"></i>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Subjects Tab */}
+            {activeTab === 'subjects' && (
+              <div className="space-y-4">
+                <h2 className="text-xl font-bold text-slate-800">Diploma Textile Technology Syllabus</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {[
+                    { title: 'Spinning Technology', desc: 'Blow Room, Ginning, Carding, Drawframe, Ring Frame' },
+                    { title: 'Weaving Technology', desc: 'Winding, Warping, Sizing, Shuttle & Shuttleless Looms' },
+                    { title: 'Textile Testing & Quality Control', desc: 'Uster Tester, Fibre Fineness, Tensile Strength, Count' },
+                    { title: 'Textile Chemistry & Wet Processing', desc: 'Scouring, Bleaching, Mercerization, Dyeing, Printing' },
+                    { title: 'Man-Made Fibre Manufacture', desc: 'Melt Spinning, Wet Spinning, Viscose, Polyester' },
+                    { title: 'Garment Manufacture & Knitting', desc: 'Fabric Structure, Weft & Warp Knitting' }
+                  ].map((sub, i) => (
+                    <div key={i} onClick={() => { setQuery(`${sub.title} ke main exam questions batao.`); setActiveTab('ask-ai'); }} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:border-indigo-500 cursor-pointer transition-all flex items-center justify-between">
+                      <div>
+                        <h3 className="font-semibold text-slate-800 text-sm">{sub.title}</h3>
+                        <p className="text-xs text-slate-500 mt-1">{sub.desc}</p>
+                      </div>
+                      <i data-lucide="chevron-right" className="w-5 h-5 text-indigo-500"></i>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* MCQ Tab */}
+            {activeTab === 'mcq' && (
+              <div className="space-y-4 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                <h2 className="text-xl font-bold text-slate-800">MCQ Practice Set</h2>
+                <p className="text-sm text-slate-600">Q1. Blow room me fine opening ke liye kaun sa beater sabse accha hota hai?</p>
+                <div className="space-y-2 pt-2">
+                  {['Blade Beater', 'Porcupine Beater', 'Kirschner Beater', 'Step Cleaner'].map((opt, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setSelectedMcqOption(idx)}
+                      className={`w-full text-left p-3 rounded-lg border text-sm transition-all ${
+                        selectedMcqOption === idx 
+                          ? (idx === 2 ? 'bg-emerald-50 border-emerald-500 text-emerald-900 font-medium' : 'bg-rose-50 border-rose-500 text-rose-900')
+                          : 'border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      {String.fromCharCode(65 + idx)}. {opt}
+                    </button>
+                  ))}
+                </div>
+                {selectedMcqOption !== null && (
+                  <div className="p-3 bg-indigo-50 text-indigo-900 text-xs rounded-lg mt-4">
+                    💡 <b>Explanation:</b> Kirschner Beater (Pinned Beater) cotton tufts ko gently and finely open karta hai.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Saved Notes Tab */}
+            {activeTab === 'notes' && (
+              <div className="space-y-4">
+                <h2 className="text-xl font-bold text-slate-800">My Saved Notes</h2>
+                {savedNotes.length === 0 ? (
+                  <p className="text-slate-500 text-sm">अभी तक कोई नोट्स सहेजे नहीं गए हैं।</p>
+                ) : (
+                  savedNotes.map(note => (
+                    <div key={note.id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-2">
+                      <h3 className="font-semibold text-indigo-900 text-sm">{note.title}</h3>
+                      <p className="text-xs text-slate-600 whitespace-pre-line line-clamp-4">{note.content}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+          </main>
+
+          {/* API Key Modal */}
+          {showKeyModal && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="bg-white p-6 rounded-2xl max-w-md w-full shadow-2xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="p-2 bg-indigo-100 text-indigo-700 rounded-lg"><i data-lucide="key" className="w-5 h-5"></i></span>
+                    <h3 className="text-lg font-bold text-slate-900">Google Gemini API Key</h3>
+                  </div>
+                  {apiKey && (
+                    <button onClick={() => setShowKeyModal(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+                      <i data-lucide="x" className="w-5 h-5"></i>
+                    </button>
+                  )}
+                </div>
+                
+                <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-3 text-xs text-indigo-900 space-y-1">
+                  <div className="font-semibold flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                    Model: <code className="bg-white px-1.5 py-0.5 rounded text-indigo-700 font-mono">gemini-2.5-flash / gemini-flash-latest</code>
+                  </div>
+                  <p className="text-slate-600">Standard Google AI Studio API Keys are 100% compatible.</p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-700">Enter API Key</label>
+                  <input
+                    type="password"
+                    placeholder="AIzaSy..."
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    className="w-full p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-mono"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between text-xs text-slate-500">
+                  <span>Need an API key?</span>
+                  <a
+                    href="https://aistudio.google.com/app/apikey"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-indigo-600 font-semibold hover:underline flex items-center gap-1"
+                  >
+                    Get Free Key from Google AI Studio <i data-lucide="external-link" className="w-3 h-3"></i>
+                  </a>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  {apiKey && (
+                    <button
+                      onClick={() => {
+                        localStorage.removeItem('gemini_api_key');
+                        setApiKey('');
+                      }}
+                      className="px-4 py-2.5 bg-slate-100 text-slate-600 font-medium rounded-xl hover:bg-slate-200 transition-colors text-xs"
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <button
+                    onClick={() => saveApiKey(apiKey)}
+                    disabled={!apiKey.trim()}
+                    className="flex-1 py-3 bg-indigo-600 text-white font-medium rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors text-sm shadow-md"
+                  >
+                    Save & Continue
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
